@@ -6,28 +6,55 @@ import {
 	NodeOperationError,
 } from 'n8n-workflow';
 
-export class ExampleNode implements INodeType {
+export class ExcelByTemplateNode implements INodeType {
 	description: INodeTypeDescription = {
-		displayName: 'Example Node',
-		name: 'exampleNode',
+		displayName: 'Excel By Template',
+		name: 'excelByTemplateNode',
 		group: ['transform'],
 		version: 1,
-		description: 'Basic Example Node',
+		description: 'Create Excel By Template',
 		defaults: {
-			name: 'Example Node',
+			name: 'Excel By Template',
 		},
-		inputs: ['main'],
+		inputs: ['excelBinary', 'jsonData'],
 		outputs: ['main'],
 		properties: [
 			// Node properties which the user gets displayed and
 			// can change on the node.
 			{
-				displayName: 'My String',
-				name: 'myString',
-				type: 'string',
+				displayName: 'Columns',
+				name: 'columns',
+				placeholder: 'Add Columns',
+				type: 'fixedCollection',
 				default: '',
-				placeholder: 'Placeholder value',
-				description: 'The description text',
+				typeOptions: {
+					multipleValues: true,
+				},
+				description: 'Add Columns',
+				options: [
+					{
+						name: 'indexColumn',
+						displayName: 'Index Column',
+						values: [
+							{
+								displayName: 'Index',
+								name: 'index',
+								type: 'number',
+								default: 'Set index column',
+							},
+							{
+								displayName: 'Property',
+								name: 'property',
+								type: 'string',
+								typeOptions :{
+									requiresDataPath: 'single'
+								},
+								default: '',
+								description: 'Set property column',
+							},
+						],
+					},
+				]
 			},
 		],
 	};
