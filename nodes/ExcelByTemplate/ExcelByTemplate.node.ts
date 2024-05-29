@@ -1,32 +1,58 @@
 import {
+	IDataObject,
 	IExecuteFunctions,
 	INodeExecutionData,
 	INodeType,
 	INodeTypeDescription,
-	NodeOperationError,
+	NodeOperationError
 } from 'n8n-workflow';
+import ExcelJS from 'exceljs';
+import { v4 as uuidv4 } from 'uuid';
+import * as fs from 'fs';
 
-export class ExcelByTemplateNode implements INodeType {
+export class ExcelByTemplate implements INodeType {
 	description: INodeTypeDescription = {
 		displayName: 'Excel By Template',
-		name: 'excelByTemplateNode',
+		name: 'excelByTemplate',
+		icon: 'file:excelByTemplate.svg',
 		group: ['transform'],
 		version: 1,
 		description: 'Create Excel By Template',
 		defaults: {
-			name: 'Excel By Template',
+			name: 'ExcelByTemplate',
 		},
-		inputs: ['excelBinary', 'jsonData'],
+		inputs: ['main'],
 		outputs: ['main'],
 		properties: [
-			// Node properties which the user gets displayed and
-			// can change on the node.
+			{
+				displayName: 'Template File',
+				name: 'templateFile',
+				type: 'string',
+				required: true,
+				default: '',
+				description: 'Template File',
+				typeOptions: {
+					requiresDataPath: 'multiple',
+				}
+			},
+			{
+				displayName: 'Start Row',
+				name: 'startRow',
+				type: 'number',
+				required: true,
+				default: 1,
+				description: 'Start Row',
+				typeOptions: {
+					minValue: 1
+				}
+			},
 			{
 				displayName: 'Columns',
-				name: 'columns',
+				name: 'columnsConfig',
 				placeholder: 'Add Columns',
 				type: 'fixedCollection',
-				default: '',
+				required: true,
+				default: {},
 				typeOptions: {
 					multipleValues: true,
 				},
@@ -40,13 +66,16 @@ export class ExcelByTemplateNode implements INodeType {
 								displayName: 'Index',
 								name: 'index',
 								type: 'number',
-								default: 'Set index column',
+								default: 1,
+								typeOptions: {
+									minValue: 1
+								}
 							},
 							{
 								displayName: 'Property',
 								name: 'property',
 								type: 'string',
-								typeOptions :{
+								typeOptions: {
 									requiresDataPath: 'single'
 								},
 								default: '',
@@ -59,45 +88,85 @@ export class ExcelByTemplateNode implements INodeType {
 		],
 	};
 
-	// The function below is responsible for actually doing whatever this node
-	// is supposed to do. In this case, we're just appending the `myString` property
-	// with whatever the user has entered.
-	// You can make async calls and use `await`.
 	async execute(this: IExecuteFunctions): Promise<INodeExecutionData[][]> {
-		const items = this.getInputData();
 
-		let item: INodeExecutionData;
-		let myString: string;
+		const tempPath: string = `temp_${uuidv4()}.xlsx`;
 
-		// Iterates over all input items and add the key "myString" with the
-		// value the parameter "myString" resolves to.
-		// (This could be a different value for each item in case it contains an expression)
-		for (let itemIndex = 0; itemIndex < items.length; itemIndex++) {
-			try {
-				myString = this.getNodeParameter('myString', itemIndex, '') as string;
-				item = items[itemIndex];
+		try {
 
-				item.json['myString'] = myString;
-			} catch (error) {
-				// This node should never fail but we want to showcase how
-				// to handle errors.
-				if (this.continueOnFail()) {
-					items.push({ json: this.getInputData(itemIndex)[0].json, error, pairedItem: itemIndex });
-				} else {
-					// Adding `itemIndex` allows other workflows to handle this error
-					if (error.context) {
-						// If the error thrown already contains the context property,
-						// only append the itemIndex
-						error.context.itemIndex = itemIndex;
-						throw error;
+			const templateFile = this.getNodeParameter('templateFile', 0) as string;
+			const startRow = this.getNodeParameter('startRow', 0) as number;
+			const columnsConfig = this.getNodeParameter('columnsConfig', 0) as IDataObject;
+
+			if (!columnsConfig.indexColumn) {
+				throw new NodeOperationError(this.getNode(), 'no configuration columns');
+			}
+
+			let newItem: INodeExecutionData = {
+				json: {},
+				binary: {}
+			};
+
+			const columns = columnsConfig.indexColumn as IDataObject[];
+
+			const workbook = new ExcelJS.Workbook();
+			await workbook.xlsx.readFile(templateFile);
+			let worksheet = workbook.getWorksheet(1);
+
+			const items = this.getInputData();
+
+			if (worksheet) {
+				for (let itemIndex = 0; itemIndex < items.length; itemIndex++) {
+					try {
+
+						columns.forEach((col) => {
+
+							const colProperty = col.property as string;
+							const colIndex = col.index as number;
+
+							const data = items[itemIndex].json[colProperty] as null | number | string | boolean | Date | undefined;
+
+							const rowData = worksheet?.getRow(itemIndex + startRow);
+							if (rowData) {
+								rowData.getCell(colIndex).value = data;
+								rowData.commit();
+							}
+
+						});
+
+					} catch (error) {
+						if (this.continueOnFail()) {
+							items.push({json: this.getInputData(itemIndex)[0].json, error, pairedItem: itemIndex});
+						} else {
+							if (error.context) {
+								error.context.itemIndex = itemIndex;
+								throw error;
+							}
+							throw new NodeOperationError(this.getNode(), error, {
+								itemIndex,
+							});
+						}
 					}
-					throw new NodeOperationError(this.getNode(), error, {
-						itemIndex,
-					});
 				}
+
+				const buffer =  await workbook.xlsx.writeBuffer();
+
+				newItem.binary!['data'] = await this.helpers.prepareBinaryData(Buffer.from(buffer), tempPath);
+
+			} else {
+				throw new NodeOperationError(this.getNode(), 'no worksheet', {})
+			}
+
+			let returnData: INodeExecutionData[] = [];
+			returnData.push(newItem)
+
+			return this.prepareOutputData(returnData);
+
+		} finally {
+			if (fs.existsSync(tempPath)) {
+				fs.unlinkSync(tempPath);
 			}
 		}
-
-		return this.prepareOutputData(items);
 	}
 }
+
